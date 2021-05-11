@@ -30,6 +30,7 @@ class SmallerNet(nn.Module):
         output = self.fc2(x)
         return output
 
+
 class LargerNet(nn.Module):
 
     def __init__(self, in_ch=1, out_ch=10, d=8):
@@ -48,5 +49,5 @@ class LargerNet(nn.Module):
         x = self.cba4(x)
         x = torch.flatten(x, 1)
         x = F.relu(self.fc1(x))
-        x = self.fc2(x)
+        output = self.fc2(x)
         return output
