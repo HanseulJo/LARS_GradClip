@@ -79,7 +79,7 @@ def train(args, model, device, train_loader, optimizer, epoch, logger=None):
         output = model(data)
         loss = F.cross_entropy(output, target)  # reduction = 'mean'
         if float(loss.item()) == float('nan'):
-            raise ValueError("NAN Loss: Too large LR")
+            raise ValueError("NAN Loss")
         loss.backward()
         optimizer.step()
         train_loss += loss.item() * len(data)
@@ -114,8 +114,8 @@ def test(args, model, device, test_loader, logger=None):
             data, target = data.to(device), target.to(device)
             output = model(data)
             loss = F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
-            if float(loss.item()) == float('nan'):
-                raise ValueError("NAN Loss: Too large LR")
+            if loss == float('nan'):
+                raise ValueError("NAN Loss")
             test_loss += loss
             pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
             test_acc += pred.eq(target.view_as(pred)).sum().item()
