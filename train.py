@@ -78,6 +78,8 @@ def train(args, model, device, train_loader, optimizer, epoch, logger=None):
         optimizer.zero_grad()
         output = model(data)
         loss = F.cross_entropy(output, target)  # reduction = 'mean'
+        if float(loss.item()) == float('nan'):
+            raise ValueError("NAN Loss: Too large LR")
         loss.backward()
         optimizer.step()
         train_loss += loss.item() * len(data)
@@ -111,7 +113,10 @@ def test(args, model, device, test_loader, logger=None):
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
             output = model(data)
-            test_loss += F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
+            loss = F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
+            if float(loss.item()) == float('nan'):
+                raise ValueError("NAN Loss: Too large LR")
+            test_loss += loss
             pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
             test_acc += pred.eq(target.view_as(pred)).sum().item()
             if args.dry_run:
@@ -121,7 +126,7 @@ def test(args, model, device, test_loader, logger=None):
 
     if logger is not None:
         logger.info('')
-        logger.info('Test set: Average loss: {:.4f}, Accuracy: {}/{} ({:.4f}%)\n\n'.format(
+        logger.info('Test set: Average loss: {:.4f}, Accuracy: {}/{} ({:.4f}%)'.format(
             test_loss, test_acc, len(test_loader.dataset),
             100. * test_acc / len(test_loader.dataset)))
 
@@ -196,7 +201,8 @@ if __name__ == '__main__':
         losses['test'].append(te_l)
         accuracies['test'].append(te_a)
     t_train = time.time() - t_start
-    logger.info(f"Training Time Lapse: {t_train:.4f} seconds")
+    logger.info("")
+    logger.info(f"Training Time Lapse: {t_train:.4f} seconds\n")
     time_str = time.strftime("%c", time.localtime(t_start))
 
     plt.figure("Train Loss")
