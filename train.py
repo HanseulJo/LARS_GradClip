@@ -24,7 +24,7 @@ def argparser(description):
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument('--batch-size', type=int, default=100, metavar='N',
                         help='input batch size for training (default: 100)')
-    parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
+    parser.add_argument('--test-batch-size', type=int, default=10000, metavar='N',
                         help='input batch size for testing (default: 1000)')
     parser.add_argument('--epochs', type=int, default=10, metavar='N',
                         help='number of epochs to train (default: 10)')
@@ -44,28 +44,31 @@ def argparser(description):
                         help='optimizer to be used (default: SGD)')
     parser.add_argument('--use-largernet', action='store_true', default=False,
                         help='use LargerNet instead of SmallerNet')
+    parser.add_argument('--log-file-on', action='store_true', default=False,
+                        help='for print_in_file option to be True')
     args = parser.parse_args()
     return args
 
 
-def log_maker(args, print_hyperparam=True):
+def log_maker(args, print_in_file=True, print_hyperparam=True):
     LOG_FORMAT = "[%(asctime)-10s] %(name)s:%(levelname)s - %(message)s"
     logging.basicConfig(format="%(message)s")   # New logs are also printed on the console
     logger = logging.getLogger(args.optimizer if args is not None else "TUNINGq")
     logger.setLevel(logging.INFO)
     formatter = logging.Formatter(fmt=LOG_FORMAT, style="%")
 
-    file_handler = logging.FileHandler(filename=os.path.join('.','logs','info.log'))
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
+    if print_in_file:
+        file_handler = logging.FileHandler(filename=os.path.join('.','logs','info.log'))
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
 
     if print_hyperparam:
         logger.info("Hyperparameters:")
         arglist = [(p,v) for p, v in vars(args).items()]
         arglist.sort(key=lambda x: len(x[0]))
         for p, v in arglist:
-            logger.info(f"{p}:\t{v}")
+            logger.info(f"{p} : \t{v}")
     return logger
 
 
@@ -78,7 +81,7 @@ def train(args, model, device, train_loader, optimizer, epoch, logger=None):
         optimizer.zero_grad()
         output = model(data)
         loss = F.cross_entropy(output, target)  # reduction = 'mean'
-        if float(loss.item()) == float('nan'):
+        if loss.isnan():
             raise ValueError("NAN Loss")
         loss.backward()
         optimizer.step()
@@ -113,8 +116,8 @@ def test(args, model, device, test_loader, logger=None):
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
             output = model(data)
-            loss = F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
-            if loss == float('nan'):
+            loss = F.cross_entropy(output, target, reduction='sum')  # sum up batch loss
+            if loss.isnan():
                 raise ValueError("NAN Loss")
             test_loss += loss
             pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
@@ -129,6 +132,7 @@ def test(args, model, device, test_loader, logger=None):
         logger.info('Test set: Average loss: {:.4f}, Accuracy: {}/{} ({:.4f}%)'.format(
             test_loss, test_acc, len(test_loader.dataset),
             100. * test_acc / len(test_loader.dataset)))
+        logger.info('')
 
     return (test_loss, 100. * test_acc / len(test_loader.dataset))
 
@@ -151,7 +155,7 @@ if __name__ == '__main__':
     args = argparser('LARS, GradClip with MNIST')
     use_cuda = not args.no_cuda and torch.cuda.is_available()
 
-    logger = log_maker(args)
+    logger = log_maker(args, print_in_file=args.log_file_on)
     torch.manual_seed(args.seed)
 
     device = torch.device("cuda" if use_cuda else "cpu")
@@ -169,7 +173,7 @@ if __name__ == '__main__':
         transforms.ToTensor(),
         transforms.Normalize((0.1307,), (0.3081,))
         ])
-    dataset_train = datasets.MNIST('./data', train=True, transform=transform)
+    dataset_train = datasets.MNIST('./data', train=True, download=True, transform=transform)
     dataset_test = datasets.MNIST('./data', train=False, transform=transform)
     train_loader = DataLoader(dataset_train, **train_kwargs)
     test_loader = DataLoader(dataset_test, **test_kwargs)
@@ -201,7 +205,6 @@ if __name__ == '__main__':
         losses['test'].append(te_l)
         accuracies['test'].append(te_a)
     t_train = time.time() - t_start
-    logger.info("")
     logger.info(f"Training Time Lapse: {t_train:.4f} seconds\n")
     time_str = time.strftime("%c", time.localtime(t_start))
 
