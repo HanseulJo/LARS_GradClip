@@ -5,11 +5,13 @@ import time
 import matplotlib.pyplot as plt
 import torch
 from torch import nn, optim
+import torch.optim.lr_scheduler as lr_scheduler
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
 from models import SmallerNet, LargerNet
+from optimizers import *
 
 """
     references:
@@ -40,12 +42,14 @@ def argparser(description):
                         help='how many batches to wait before logging training status')
     parser.add_argument('--save-model', action='store_true', default=False,
                         help='For Saving the current Model')
-    parser.add_argument('--optimizer', type=str, default='SGD', metavar='N',
+    parser.add_argument('--optimizer', type=str, default='SGD', metavar='OPTIM',
                         help='optimizer to be used (default: SGD)')
     parser.add_argument('--use-largernet', action='store_true', default=False,
                         help='use LargerNet instead of SmallerNet')
     parser.add_argument('--log-file-on', action='store_true', default=False,
                         help='for print_in_file option to be True')
+    parser.add_argument('--eta', type=float, default=0.001, metavar='ETA',
+                        help='LARS coefficient(default: 0.001)')      
     args = parser.parse_args()
     return args
 
@@ -53,7 +57,7 @@ def argparser(description):
 def log_maker(args, print_in_file=True, print_hyperparam=True):
     LOG_FORMAT = "[%(asctime)-10s] %(name)s:%(levelname)s - %(message)s"
     logging.basicConfig(format="%(message)s")   # New logs are also printed on the console
-    logger = logging.getLogger(args.optimizer if args is not None else "TUNINGq")
+    logger = logging.getLogger(args.optimizer if args is not None else "TUNING")
     logger.setLevel(logging.INFO)
     formatter = logging.Formatter(fmt=LOG_FORMAT, style="%")
 
@@ -145,10 +149,20 @@ def poly_lr_scheduler(optimizer, epoch, max_epoch, lr_init=1, lr_final=None, deg
         lr_final = lr_init * 1e-4
     lr = lr_final + (lr_init - lr_final) * (1 - epoch/max_epoch) ** degree
     if logger is not None:
-        logger.info('LR is set to {}'.format(lr))
+        logger.info(f'LR is set to {lr}')
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     return optimizer
+
+
+def poly_decay(epoch, max_epoch, lr_init, lr_final=None, degree=2):
+    if degree <= 0:
+        assert degree == 0
+        return 1
+    if lr_final is None:
+        lr_final = lr_init * 1e-4
+    lr = lr_final + (lr_init - lr_final) * (1 - epoch/max_epoch) ** degree
+    return lr / lr_init
 
 
 if __name__ == '__main__':
@@ -184,20 +198,22 @@ if __name__ == '__main__':
     else:
         model = SmallerNet().to(device)
 
-    optimizers = {
-        'SGD': optim.SGD(model.parameters(), lr=args.lr),
-        'LARS': None,
-        'GradClip': None,
-    }
-    optim_original = optimizers[args.optimizer]
+    optimizer = None
+    if args.optimizer == 'SGD':
+        optimizer = optim.SGD(model.parameters(), lr=args.lr)
+    elif args.optimizer == 'LARS':
+        optimizer = LARS(model.parameters(), lr=args.lr, eta=args.eta)
+    elif args.optimizer == 'GradClip': 
+        optimizer = GradClip(model.parameters(), lr=args.lr)
+
+    scheduler = lr_scheduler.LambdaLR(optimizer,
+                                      lr_lambda=lambda x: poly_decay(x, args.epochs, args.lr))
 
     # learning rate decay: polynomial of degree 2
     losses = {'train': [],'test': []}
     accuracies = {'train': [],'test': []}
     t_start = time.time()
     for epoch in range(1, args.epochs + 1):
-        optimizer = poly_lr_scheduler(optim_original, epoch-1, args.epochs-1,
-            lr_init=args.lr, lr_final=args.lr*1e-4, logger=logger)
         tr_l, tr_a = train(args, model, device, train_loader, optimizer, epoch, logger=logger)
         losses['train'].append(tr_l)
         accuracies['train'].append(tr_a)

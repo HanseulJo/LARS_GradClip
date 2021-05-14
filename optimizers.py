@@ -2,11 +2,6 @@ import torch
 from torch import optim
 from torch.optim.optimizer import Optimizer, required
 
-"""
-    references:
-    https://github.com/noahgolmant/pytorch-lars/blob/master/lars.py
-"""
-
 class LARS(Optimizer):
     r"""Implements layer-wise adaptive rate scaling for SGD.
     Args:
@@ -20,30 +15,102 @@ class LARS(Optimizer):
     Based on Algorithm 1 of the following paper by You, Gitman, and Ginsburg.
     Large Batch Training of Convolutional Networks:
         https://arxiv.org/abs/1708.03888
+    The LR decay feature is separated from the original code:
+        https://github.com/noahgolmant/pytorch-lars/blob/master/lars.py
     Example:
         >>> optimizer = LARS(model.parameters(), lr=0.1, eta=1e-3)
         >>> optimizer.zero_grad()
         >>> loss_fn(model(input), target).backward()
         >>> optimizer.step()
     """
+    def __init__(self, params, lr=required, momentum=0,
+                 weight_decay=0, eta=0.001):
+        if lr is not required and lr < 0.0:
+            raise ValueError("Invalid learning rate: {}".format(lr))
+        if momentum < 0.0:
+            raise ValueError("Invalid momentum value: {}".format(momentum))
+        if weight_decay < 0.0:
+            raise ValueError("Invalid weight_decay value: {}".format(weight_decay))
+        if eta < 0.0:
+            raise ValueError("Invalid LARS coefficient value: {}".format(eta))
+
+        defaults = dict(lr=lr, momentum=momentum,
+                        weight_decay=weight_decay, eta=eta)
+        
+        super(LARS, self).__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        """Performs a single optimization step.
+
+        Arguments:
+            closure (callable, optional): A closure that reevaluates the model
+                and returns the loss.
+        """
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        for group in self.param_groups:
+            weight_decay = group['weight_decay']
+            momentum = group['momentum']
+            eta = group['eta']
+            lr = group['lr']
+
+            for p in group['params']:
+                if p.grad is None:
+                    continue
+                d_p = p.grad.data
+                weight_norm = torch.norm(p.data)
+                grad_norm = torch.norm(d_p.data)
+                
+                if weight_decay != 0:
+                    grad_norm.add_(weight_norm, alpha=weight_decay)
+                    d_p.add_(p.data, alpha=weight_decay)
+                # Compute local learning rate for this layer
+                local_lr = eta * weight_norm / (grad_norm + 1e-8)
+                # Update the momentum term
+                actual_lr = local_lr * lr
+
+                param_state = self.state[p]
+                if 'momentum_buffer' not in param_state:
+                    buf = param_state['momentum_buffer'] = torch.zeros_like(p.data)
+                else:
+                    buf = param_state['momentum_buffer']
+                buf.mul_(momentum).add_(d_p, alpha=actual_lr)
+                p.data.add_(-buf)
+
+        return loss
+
+class GradClip(Optimizer):
+    r"""Implements Gradient Clipping for SGD.
+    Args:
+        params (iterable): iterable of parameters to optimize or dicts defining
+            parameter groups
+        lr (float): base learning rate (\gamma_0)
+        momentum (float, optional): momentum factor (default: 0) ("m")
+        weight_decay (float, optional): weight decay (L2 penalty) (default: 0)
+            ("\beta")
+        threshold (float, optional): gradient norm threshold
+    """
     def __init__(self, params, lr=required, momentum=.9,
-                 weight_decay=.0005, eta=0.001,):
+                 weight_decay=.0005, threshold=0.1):
         if lr is not required and lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
         if momentum < 0.0:
             raise ValueError(f"Invalid momentum value: {momentum}")
         if weight_decay < 0.0:
             raise ValueError(f"Invalid weight_decay value: {weight_decay}")
-        if eta < 0.0:
-            raise ValueError(f"Invalid LARS coefficient value: {eta}")
-
-        self.epoch = 0
+        if threshold < 0.0:
+            raise ValueError(f"Invalid grad norm threshold: {threshold}")
+        
         defaults = dict(lr=lr, momentum=momentum,
                         weight_decay=weight_decay,
-                        eta=eta)
-        super(LARS, self).__init__(params, defaults)
+                        threshold=threshold)
+        super(GradClip, self).__init__(params, defaults)
 
-    def step(self, epoch=None, closure=None):
+    def step(self, closure=None):
         """Performs a single optimization step.
         Arguments:
             closure (callable, optional): A closure that reevaluates the model
@@ -54,41 +121,41 @@ class LARS(Optimizer):
         loss = None
         if closure is not None:
             loss = closure()
-
-        if epoch is None:
-            epoch = self.epoch
-            self.epoch += 1
+        
+        device = self.param_groups[0]['params'][0].grad.device()
+        total_grad_norm = torch.norm(torch.stack([torch.norm(p.grad.detach()).to(device) \
+                                                  for p in group['params'] for group in self.param_groups \
+                                                  if p.grad is not None]))
+        if total_grad_norm.isnan() or total_grad_norm.isinf():
+            raise RuntimeError(f'The total norm for gradients from is non-finite, so it cannot be clipped.')
 
         for group in self.param_groups:
             weight_decay = group['weight_decay']
             momentum = group['momentum']
-            eta = group['eta']
+            threshold = group['threshold']
             lr = group['lr']
-            max_epoch = group['max_epoch']
-
+            
+            device = group['params'][0].grad.device()
+            grad_norm = torch.norm(torch.stack([torch.norm(p.grad.detach()).to(device) \
+                                                for p in group['params'] if p.grad is not None]))
+            
+            if grad_norm > threshold:
+                actual_lr = lr * threshold / (grad_norm + 1e-8)
+            else:
+                actual_lr = lr
+            
             for p in group['params']:
                 if p.grad is None:
                     continue
-
-                param_state = self.state[p]
                 d_p = p.grad.data
-
-                weight_norm = torch.norm(p.data)
-                grad_norm = torch.norm(d_p)
-
-                global_lr = lr  # no learning rate decay
-
-                # Compute local learning rate for this layer
-                local_lr = eta * weight_norm / (grad_norm + weight_decay * weight_norm)
-
-                # Update the momentum term
-                actual_lr = local_lr * global_lr
-
+                if weight_decay != 0:
+                    d_p.add_(p.data, alpha=weight_decay)
+                param_state = self.state[p]
                 if 'momentum_buffer' not in param_state:
                     buf = param_state['momentum_buffer'] = torch.zeros_like(p.data)
                 else:
                     buf = param_state['momentum_buffer']
-                buf.mul_(momentum).add_(actual_lr, d_p + weight_decay * p.data)
+                buf.mul_(momentum).add_(d_p, alpha=actual_lr)
                 p.data.add_(-buf)
 
         return loss
