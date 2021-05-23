@@ -1,18 +1,34 @@
 import os
-import time
-from train import log_maker
+from itertools import product
+#import random
 
-OPTIM_NAME = "SGD"
+OPTIM_NAME = "GradClip"
 USE_LARGERNET = False
+LOG_ON = False
+print(f"Log on argumet is {LOG_ON}\n")
 
-logger = log_maker(None, print_hyperparam=False)
+COMMANDS = {
+    "SGD": lambda x: f"python train.py --batch-size {x[0]} --lr {x[1]} --optimizer {OPTIM_NAME}",
+    "LARS": lambda x: f"python train.py --batch-size {x[0]} --lr {x[1]} --optimizer {OPTIM_NAME} --eta {x[2]}",
+    "GradClip": lambda x: f"python train.py --batch-size {x[0]} --lr {x[1]} --optimizer {OPTIM_NAME}--clip {x[2]}",
+}
+GENERATORS = {
+    "SGD": product(range(3,4+1), range(-1,2+1)),
+    "LARS": product(range(3,4+1), range(-1,2+1), range(-3,2+1)),
+    "GradClip": product(range(3,4+1), range(-1,2+1), range(-3,2+1)),
+}
+EXP10 = lambda x: [10 ** p  for p in x]
 
-for bs_exp in range(1,5):
-    for lr_exp in range(-4, 3):
-        bs = 10 ** bs_exp
-        lr = 10 ** lr_exp
-        try:
-            os.system(f"python train.py --batch-size {bs} --lr {lr} --optimizer {OPTIM_NAME} {'--use-largernet' if USE_LARGERNET else ''} --log-file-on")
-        except Exception as e:
-            logger.info("!!! Exception occured !!!")
-            logger.info(e)
+
+def main():
+    for params in GENERATORS[OPTIM_NAME]:
+        command = COMMANDS[OPTIM_NAME](EXP10(params))
+        if USE_LARGERNET:
+            command += " --use-largernet"
+        if LOG_ON:
+            command += " --log-file-on"
+        if os.system(command) != 0:
+            break
+
+if __name__ == '__main__':
+    main()

@@ -24,10 +24,10 @@ from optimizers import *
 def argparser(description):
     # Training settings
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument('--batch-size', type=int, default=100, metavar='N',
+    parser.add_argument('--batch-size', type=int, default=1000, metavar='N',
                         help='input batch size for training (default: 100)')
     parser.add_argument('--test-batch-size', type=int, default=10000, metavar='N',
-                        help='input batch size for testing (default: 1000)')
+                        help='input batch size for testing (default: 10000)')
     parser.add_argument('--epochs', type=int, default=10, metavar='N',
                         help='number of epochs to train (default: 10)')
     parser.add_argument('--lr', type=float, default=1.0, metavar='LR',
@@ -48,8 +48,12 @@ def argparser(description):
                         help='use LargerNet instead of SmallerNet')
     parser.add_argument('--log-file-on', action='store_true', default=False,
                         help='for print_in_file option to be True')
-    parser.add_argument('--eta', type=float, default=0.001, metavar='ETA',
-                        help='LARS coefficient(default: 0.001)')      
+    parser.add_argument('--eta', type=float, default=0.01, metavar='ETA',
+                        help='LARS coefficient(default: 0.01)')
+    parser.add_argument('--clip', type=float, default=1., metavar='CLIP',
+                        help='gradient clip threshold (default: 1.0')
+    parser.add_argument('--lr-decay-degree', type=float, default=2, metavar='CLIP',
+                        help='LR scheduling function degree (default: 2')
     args = parser.parse_args()
     return args
 
@@ -165,7 +169,7 @@ def poly_decay(epoch, max_epoch, lr_init, lr_final=None, degree=2):
     return lr / lr_init
 
 
-if __name__ == '__main__':
+def main():
     args = argparser('LARS, GradClip with MNIST')
     use_cuda = not args.no_cuda and torch.cuda.is_available()
 
@@ -204,42 +208,65 @@ if __name__ == '__main__':
     elif args.optimizer == 'LARS':
         optimizer = LARS(model.parameters(), lr=args.lr, eta=args.eta)
     elif args.optimizer == 'GradClip': 
-        optimizer = GradClip(model.parameters(), lr=args.lr)
+        optimizer = GradClip(model.parameters(), lr=args.lr, threshold=args.clip)
 
     scheduler = lr_scheduler.LambdaLR(optimizer,
-                                      lr_lambda=lambda x: poly_decay(x, args.epochs, args.lr))
+                                      lr_lambda=lambda x: poly_decay(x, args.epochs, args.lr, 
+                                                                     degree=args.lr_decay_degree))
 
     # learning rate decay: polynomial of degree 2
     losses = {'train': [],'test': []}
     accuracies = {'train': [],'test': []}
-    t_start = time.time()
-    for epoch in range(1, args.epochs + 1):
-        tr_l, tr_a = train(args, model, device, train_loader, optimizer, epoch, logger=logger)
-        losses['train'].append(tr_l)
-        accuracies['train'].append(tr_a)
-        te_l, te_a = test(args, model, device, test_loader, logger=logger)
-        losses['test'].append(te_l)
-        accuracies['test'].append(te_a)
-    t_train = time.time() - t_start
-    logger.info(f"Training Time Lapse: {t_train:.4f} seconds\n")
-    time_str = time.strftime("%c", time.localtime(t_start))
+    domain_length = 0
+    interrupt_flag = 0
+    try:
+        t_start = time.time()
+        for epoch in range(1, args.epochs + 1):
+            try:
+                logger.info(f"LR is modified to {scheduler.get_last_lr()[0]:.4f}")
+                tr_l, tr_a = train(args, model, device, train_loader, optimizer, epoch, logger=logger)
+                losses['train'].append(tr_l)
+                accuracies['train'].append(tr_a)
+                te_l, te_a = test(args, model, device, test_loader, logger=logger)
+                losses['test'].append(te_l)
+                accuracies['test'].append(te_a)
+                domain_length += 1
+                scheduler.step()
+            except KeyboardInterrupt:
+                interrupt_flag = 1
+                break
+        t_train = time.time() - t_start
+        logger.info(f"Training Time Lapse: {t_train:.4f} seconds\n")
+        time_str = time.strftime("%y-%m-%d %X", time.localtime(t_start))  # format has changed: original: %c
+    except Exception as e:
+        logger.info("!!! Exception occured !!!")
+        logger.info(e)
+        logger.info("\n")
+    
+    if interrupt_flag == 1:
+        logger.info("\n!!! Interrupted by Keyboard !!!\n")
+        raise InterruptedError
 
-    plt.figure("Train Loss")
-    plt.plot(list(range(1, args.epochs+1)), losses['train'])
-    plt.title(f"Train Loss: {args.optimizer} (batchsize {args.batch_size}) (lr_init {args.lr})")
-    plt.savefig(os.path.join(".","plots",time_str+' trainloss.png'), dpi=300)
-    plt.figure("Test Loss")
-    plt.plot(list(range(1, args.epochs+1)), losses['test'])
-    plt.title(f"Test Loss: {args.optimizer} (batchsize {args.batch_size}) (lr_init {args.lr})")
-    plt.savefig(os.path.join(".","plots",time_str+' test_loss.png'), dpi=300)
-    plt.figure("Train Accuracy")
-    plt.plot(list(range(1, args.epochs+1)), accuracies['train'])
-    plt.title(f"Train Acc: {args.optimizer} (batchsize {args.batch_size}) (lr_init {args.lr})")
-    plt.savefig(os.path.join(".","plots",time_str+' trainaccu.png'), dpi=300)
-    plt.figure("Test Accuracy")
-    plt.plot(list(range(1, args.epochs+1)), accuracies['test'])
-    plt.title(f"Test Acc: {args.optimizer} (batchsize {args.batch_size}) (lr_init {args.lr})")
-    plt.savefig(os.path.join(".","plots",time_str+' test_accu.png'), dpi=300)
+    if domain_length > 0:
+        plt.figure("Train Loss")
+        plt.plot(list(range(1, domain_length+1)), losses['train'])
+        plt.title(f"Train Loss: {args.optimizer} (batchsize {args.batch_size}) (lr_init {args.lr})")
+        plt.savefig(os.path.join(".","plots",time_str+' trainloss.png'), dpi=300)
+        plt.figure("Test Loss")
+        plt.plot(list(range(1, domain_length+1)), losses['test'])
+        plt.title(f"Test Loss: {args.optimizer} (batchsize {args.batch_size}) (lr_init {args.lr})")
+        plt.savefig(os.path.join(".","plots",time_str+' test_loss.png'), dpi=300)
+        plt.figure("Train Accuracy")
+        plt.plot(list(range(1, domain_length+1)), accuracies['train'])
+        plt.title(f"Train Acc: {args.optimizer} (batchsize {args.batch_size}) (lr_init {args.lr})")
+        plt.savefig(os.path.join(".","plots",time_str+' trainaccu.png'), dpi=300)
+        plt.figure("Test Accuracy")
+        plt.plot(list(range(1, domain_length+1)), accuracies['test'])
+        plt.title(f"Test Acc: {args.optimizer} (batchsize {args.batch_size}) (lr_init {args.lr})")
+        plt.savefig(os.path.join(".","plots",time_str+' test_accu.png'), dpi=300)
 
     if args.save_model:
         torch.save(model.state_dict(), "mnist_sgd.pt")
+
+if __name__ == '__main__':
+    main()

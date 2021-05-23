@@ -94,8 +94,8 @@ class GradClip(Optimizer):
             ("\beta")
         threshold (float, optional): gradient norm threshold
     """
-    def __init__(self, params, lr=required, momentum=.9,
-                 weight_decay=.0005, threshold=0.1):
+    def __init__(self, params, lr=required, momentum=0,
+                 weight_decay=0, threshold=0.1):
         if lr is not required and lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
         if momentum < 0.0:
@@ -121,13 +121,6 @@ class GradClip(Optimizer):
         loss = None
         if closure is not None:
             loss = closure()
-        
-        device = self.param_groups[0]['params'][0].grad.device()
-        total_grad_norm = torch.norm(torch.stack([torch.norm(p.grad.detach()).to(device) \
-                                                  for p in group['params'] for group in self.param_groups \
-                                                  if p.grad is not None]))
-        if total_grad_norm.isnan() or total_grad_norm.isinf():
-            raise RuntimeError(f'The total norm for gradients from is non-finite, so it cannot be clipped.')
 
         for group in self.param_groups:
             weight_decay = group['weight_decay']
@@ -135,10 +128,12 @@ class GradClip(Optimizer):
             threshold = group['threshold']
             lr = group['lr']
             
-            device = group['params'][0].grad.device()
+            device = group['params'][0].grad.device
             grad_norm = torch.norm(torch.stack([torch.norm(p.grad.detach()).to(device) \
                                                 for p in group['params'] if p.grad is not None]))
-            
+            if grad_norm.isnan() or grad_norm.isinf():
+                raise RuntimeError(f'The total norm for gradients from is non-finite, so it cannot be clipped.')
+
             if grad_norm > threshold:
                 actual_lr = lr * threshold / (grad_norm + 1e-8)
             else:
