@@ -209,6 +209,10 @@ def main():
         optimizer = LARS(model.parameters(), lr=args.lr, eta=args.eta)
     elif args.optimizer == 'GradClip': 
         optimizer = GradClip(model.parameters(), lr=args.lr, threshold=args.clip)
+    elif args.optimizer == 'LGC': 
+        optimizer = LGC(model.parameters(), lr=args.lr, threshold=args.clip)
+    elif args.optimizer == 'LaRSPaG': 
+        optimizer = LaRSPaG(model.parameters(), lr=args.lr, eta=args.eta, threshold=args.clip, )
 
     scheduler = lr_scheduler.LambdaLR(optimizer,
                                       lr_lambda=lambda x: poly_decay(x, args.epochs, args.lr, 
