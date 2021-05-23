@@ -2,9 +2,10 @@ import os
 from itertools import product
 #import random
 
-OPTIM_NAME = "GradClip"
+OPTIM_NAME = "SGD"
 USE_LARGERNET = False
 LOG_ON = False
+LR_DECAY_DEG = 0
 print(f"Log on argumet is {LOG_ON}\n")
 
 COMMANDS = {
@@ -27,6 +28,8 @@ def main():
             command += " --use-largernet"
         if LOG_ON:
             command += " --log-file-on"
+        if LR_DECAY_DEG != 2:
+            command += f" --lr-decay-degree {LR_DECAY_DEG}"
         if os.system(command) != 0:
             break
 
