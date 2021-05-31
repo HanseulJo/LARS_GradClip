@@ -30,30 +30,34 @@ def argparser(description):
                         help='input batch size for testing (default: 10000)')
     parser.add_argument('--epochs', type=int, default=10, metavar='N',
                         help='number of epochs to train (default: 10)')
-    parser.add_argument('--lr', type=float, default=1.0, metavar='LR',
+    parser.add_argument('--lr', type=float, default=1.0, metavar='FLOAT',
                         help='learning rate (default: 1.0)')
     parser.add_argument('--no-cuda', action='store_true', default=False,
                         help='disables CUDA training')
     parser.add_argument('--dry-run', action='store_true', default=False,
                         help='quickly check a single pass')
-    parser.add_argument('--seed', type=int, default=1, metavar='S',
+    parser.add_argument('--seed', type=int, default=1, metavar='N',
                         help='random seed (default: 1)')
     parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                         help='how many batches to wait before logging training status')
     parser.add_argument('--save-model', action='store_true', default=False,
-                        help='For Saving the current Model')
-    parser.add_argument('--optimizer', type=str, default='SGD', metavar='OPTIM',
+                        help='for saving the current model')
+    parser.add_argument('--optimizer', type=str, default='SGD', metavar='OPTIM_NAME',
                         help='optimizer to be used (default: SGD)')
     parser.add_argument('--use-largernet', action='store_true', default=False,
                         help='use LargerNet instead of SmallerNet')
     parser.add_argument('--log-file-on', action='store_true', default=False,
                         help='for print_in_file option to be True')
-    parser.add_argument('--eta', type=float, default=0.01, metavar='ETA',
+    parser.add_argument('--eta', type=float, default=0.01, metavar='FLOAT',
                         help='LARS coefficient(default: 0.01)')
-    parser.add_argument('--clip', type=float, default=1., metavar='CLIP',
-                        help='gradient clip threshold (default: 1.0')
-    parser.add_argument('--lr-decay-degree', type=float, default=2, metavar='CLIP',
-                        help='LR scheduling function degree (default: 2')
+    parser.add_argument('--clip', type=float, default=1., metavar='FLOAT',
+                        help='gradient clip threshold (default: 1.0)')
+    parser.add_argument('--lr-decay-degree', type=float, default=2, metavar='N',
+                        help='LR scheduling function degree (default: 2)')
+    parser.add_argument('--momentum', type=float, default=0., metavar='FLOAT',
+                        help='momentum for optimizers (default: 0.0)')
+    parser.add_argument('--weight-decay', type=float, default=0.0, metavar='FLOAT',
+                        help='weight decay coeff for optimizers (default: 0.0)')
     args = parser.parse_args()
     return args
 
@@ -204,15 +208,16 @@ def main():
 
     optimizer = None
     if args.optimizer == 'SGD':
-        optimizer = optim.SGD(model.parameters(), lr=args.lr)
+        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     elif args.optimizer == 'LARS':
-        optimizer = LARS(model.parameters(), lr=args.lr, eta=args.eta)
+        optimizer = LARS(model.parameters(), lr=args.lr, eta=args.eta, momentum=args.momentum, weight_decay=args.weight_decay)
     elif args.optimizer == 'GradClip': 
-        optimizer = GradClip(model.parameters(), lr=args.lr, threshold=args.clip)
+        optimizer = GradClip(model.parameters(), lr=args.lr, threshold=args.clip, momentum=args.momentum, weight_decay=args.weight_decay)
     elif args.optimizer == 'LGC': 
-        optimizer = LGC(model.parameters(), lr=args.lr, threshold=args.clip)
+        optimizer = LGC(model.parameters(), lr=args.lr, threshold=args.clip, momentum=args.momentum, weight_decay=args.weight_decay)
     elif args.optimizer == 'LaRSPaG': 
-        optimizer = LaRSPaG(model.parameters(), lr=args.lr, eta=args.eta, threshold=args.clip, )
+        optimizer = LaRSPaG(model.parameters(), lr=args.lr, eta=args.eta, threshold=args.clip, momentum=args.momentum, weight_decay=args.weight_decay)
+    
 
     scheduler = lr_scheduler.LambdaLR(optimizer,
                                       lr_lambda=lambda x: poly_decay(x, args.epochs, args.lr, 
@@ -241,18 +246,18 @@ def main():
                 break
         t_train = time.time() - t_start
         logger.info(f"Training Time Lapse: {t_train:.4f} seconds\n")
-        time_str = time.strftime("%y-%m-%d %X", time.localtime(t_start))  # format has changed: original: %c
     except Exception as e:
         logger.info("!!! Exception occured !!!")
         logger.info(e)
         logger.info("\n")
-    
+
     if interrupt_flag == 1:
         logger.info("\n!!! Interrupted by Keyboard !!!\n")
         raise InterruptedError
-
+    
     if domain_length > 0:
-        plt.figure("Train Loss")
+        time_str = time.strftime("%y-%m-%d %X", time.localtime(t_start))
+        """plt.figure("Train Loss")
         plt.plot(list(range(1, domain_length+1)), losses['train'])
         plt.title(f"Train Loss: {args.optimizer} (batchsize {args.batch_size}) (lr_init {args.lr})")
         plt.savefig(os.path.join(".","plots",time_str+' trainloss.png'), dpi=300)
@@ -263,7 +268,7 @@ def main():
         plt.figure("Train Accuracy")
         plt.plot(list(range(1, domain_length+1)), accuracies['train'])
         plt.title(f"Train Acc: {args.optimizer} (batchsize {args.batch_size}) (lr_init {args.lr})")
-        plt.savefig(os.path.join(".","plots",time_str+' trainaccu.png'), dpi=300)
+        plt.savefig(os.path.join(".","plots",time_str+' trainaccu.png'), dpi=300)"""
         plt.figure("Test Accuracy")
         plt.plot(list(range(1, domain_length+1)), accuracies['test'])
         plt.title(f"Test Acc: {args.optimizer} (batchsize {args.batch_size}) (lr_init {args.lr})")
